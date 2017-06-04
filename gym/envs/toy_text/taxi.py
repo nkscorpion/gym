@@ -10,7 +10,7 @@ MAP = [
     "|R: | : :G|",
     "| : : : : |",
     "| : : : : |",
-    "| | :F| : |",
+    "| | : | : |",
     "|Y| : |B: |",
     "+---------+",
 ]
@@ -34,7 +34,7 @@ class TaxiEnv(discrete.DiscreteEnv):
     def __init__(self):
         self.desc = np.asarray(MAP,dtype='c')
 
-        self.locs = locs = [(0,0), (0,4), (4,0), (3,2), (4,3)]
+        self.locs = locs = [(0,0), (0,4), (4,0), (4,3)]
 
         nS = 500
         nR = 5
@@ -48,8 +48,10 @@ class TaxiEnv(discrete.DiscreteEnv):
             for col in range(5):
                 for passidx in range(5):
                     for destidx in range(4):
+                        state = self.encode(row, col, passidx, destidx)
+                        if passidx < 4 and passidx != destidx:
+                            isd[state] += 1
                         for a in range(nA):
-                            state = self.encode(row, col, passidx, destidx)
                             # defaults
                             newrow, newcol, newpassidx = row, col, passidx
                             reward = -1
@@ -60,30 +62,27 @@ class TaxiEnv(discrete.DiscreteEnv):
                                 newrow = min(row+1, maxR)
                             elif a==1:
                                 newrow = max(row-1, 0)
-                            if a==2 and self.desc[1+row,2*col+2]==":":
+                            if a==2 and self.desc[1+row,2*col+2]==b":":
                                 newcol = min(col+1, maxC)
-                            elif a==3 and self.desc[1+row,2*col]==":":
+                            elif a==3 and self.desc[1+row,2*col]==b":":
                                 newcol = max(col-1, 0)
                             elif a==4: # pickup
-                                if (taxiloc == locs[passidx]):
+                                if (passidx < 4 and taxiloc == locs[passidx]):
                                     newpassidx = 4
                                 else:
                                     reward = -10
                             elif a==5: # dropoff
                                 if (taxiloc == locs[destidx]) and passidx==4:
                                     done = True
+                                    reward = 20
                                 elif (taxiloc in locs) and passidx==4:
                                     newpassidx = locs.index(taxiloc)
                                 else:
                                     reward = -10
                             newstate = self.encode(newrow, newcol, newpassidx, destidx)
-                            if passidx < 4: isd[state] += 1
                             P[state][a].append((1.0, newstate, reward, done))
         isd /= isd.sum()
         discrete.DiscreteEnv.__init__(self, nS, nA, P, isd)
-
-        self.observation_space = spaces.Discrete(500)
-        self.action_space = spaces.Discrete(6)
 
     def encode(self, taxirow, taxicol, passloc, destidx):
         # (5) 5, 5, 4
@@ -129,7 +128,7 @@ class TaxiEnv(discrete.DiscreteEnv):
         out[1+di][2*dj+1] = utils.colorize(out[1+di][2*dj+1], 'magenta')
         outfile.write("\n".join(["".join(row) for row in out])+"\n")
         if self.lastaction is not None:
-            outfile.write("  ({})\n".format(["North", "South", "East", "West", "Pickup", "Dropoff"][self.lastaction]))
+            outfile.write("  ({})\n".format(["South", "North", "East", "West", "Pickup", "Dropoff"][self.lastaction]))
         else: outfile.write("\n")
 
         # No need to return anything for human

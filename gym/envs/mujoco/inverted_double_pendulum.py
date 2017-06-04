@@ -31,13 +31,13 @@ class InvertedDoublePendulumEnv(mujoco_env.MujocoEnv, utils.EzPickle):
 
     def reset_model(self):
         self.set_state(
-            self.init_qpos + np.random.uniform(low=-.1, high=.1, size=self.model.nq),
-            self.init_qvel + np.random.randn(self.model.nv) * .1
+            self.init_qpos + self.np_random.uniform(low=-.1, high=.1, size=self.model.nq),
+            self.init_qvel + self.np_random.randn(self.model.nv) * .1
         )
         return self._get_obs()
 
     def viewer_setup(self):
         v = self.viewer
-        v.cam.trackbodyid=0
+        v.cam.trackbodyid = 0
         v.cam.distance = v.model.stat.extent * 0.5
-        v.cam.lookat[2] += 3#v.model.stat.center[2]
+        v.cam.lookat[2] += 3  # v.model.stat.center[2]

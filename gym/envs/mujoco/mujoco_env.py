@@ -1,6 +1,7 @@
 import os
 
 from gym import error, spaces
+from gym.utils import seeding
 import numpy as np
 from os import path
 import gym
@@ -8,23 +9,12 @@ import six
 
 try:
     import mujoco_py
+    from mujoco_py.mjlib import mjlib
 except ImportError as e:
     raise error.DependencyNotInstalled("{}. (HINT: you need to install mujoco_py, and also perform the setup instructions here: https://github.com/openai/mujoco-py/.)".format(e))
 
-
-# move this into mujoco-py next time we upgrade it!!! 
-# ---------------------------------------------------
-from mujoco_py.mjlib import mjlib
-from mujoco_py.mjtypes import POINTER, MJMODEL, MJDATA
-mjlib.mj_resetData.argtypes = [POINTER(MJMODEL), POINTER(MJDATA)]
-mjlib.mj_resetData.restype = None
-# ---------------------------------------------------
-
-
 class MujocoEnv(gym.Env):
-
-    """
-    Superclass of MuJoCo environments.
+    """Superclass for all MuJoCo environments.
     """
 
     def __init__(self, model_path, frame_skip):
@@ -33,20 +23,20 @@ class MujocoEnv(gym.Env):
         else:
             fullpath = os.path.join(os.path.dirname(__file__), "assets", model_path)
         if not path.exists(fullpath):
-            raise IOError("File %s does not exist"%fullpath)
-        self.frame_skip= frame_skip
+            raise IOError("File %s does not exist" % fullpath)
+        self.frame_skip = frame_skip
         self.model = mujoco_py.MjModel(fullpath)
         self.data = self.model.data
         self.viewer = None
 
         self.metadata = {
             'render.modes': ['human', 'rgb_array'],
-            'video.frames_per_second' : int(np.round(1.0 / self.dt))
+            'video.frames_per_second': int(np.round(1.0 / self.dt))
         }
 
         self.init_qpos = self.model.data.qpos.ravel().copy()
         self.init_qvel = self.model.data.qvel.ravel().copy()
-        observation, _reward, done, _info = self.step(np.zeros(self.model.nu))
+        observation, _reward, done, _info = self._step(np.zeros(self.model.nu))
         assert not done
         self.obs_dim = observation.size
 
@@ -57,7 +47,13 @@ class MujocoEnv(gym.Env):
 
         high = np.inf*np.ones(self.obs_dim)
         low = -high
-        self.observation_space = spaces.Box(low, high)        
+        self.observation_space = spaces.Box(low, high)
+
+        self._seed()
+
+    def _seed(self, seed=None):
+        self.np_random, seed = seeding.np_random(seed)
+        return [seed]
 
     # methods to override:
     # ----------------------------
@@ -91,9 +87,8 @@ class MujocoEnv(gym.Env):
         assert qpos.shape == (self.model.nq,) and qvel.shape == (self.model.nv,)
         self.model.data.qpos = qpos
         self.model.data.qvel = qvel
-        self.model._compute_subtree() #pylint: disable=W0212
+        self.model._compute_subtree()  # pylint: disable=W0212
         self.model.forward()
-
 
     @property
     def dt(self):
@@ -108,13 +103,14 @@ class MujocoEnv(gym.Env):
         if close:
             if self.viewer is not None:
                 self._get_viewer().finish()
+                self.viewer = None
             return
 
         if mode == 'rgb_array':
             self._get_viewer().render()
             data, width, height = self._get_viewer().get_image()
-            return np.fromstring(data, dtype='uint8').reshape(height, width, 3)[::-1,:,:]
-        elif mode is 'human':
+            return np.fromstring(data, dtype='uint8').reshape(height, width, 3)[::-1, :, :]
+        elif mode == 'human':
             self._get_viewer().loop_once()
 
     def _get_viewer(self):

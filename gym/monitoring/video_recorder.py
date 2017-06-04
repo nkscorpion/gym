@@ -36,22 +36,27 @@ class VideoRecorder(object):
 
     def __init__(self, env, path=None, metadata=None, enabled=True, base_path=None):
         modes = env.metadata.get('render.modes', [])
+        self._async = env.metadata.get('semantics.async')
+        self.enabled = enabled
+
+        # Don't bother setting anything else if not enabled
+        if not self.enabled:
+            return
+
         self.ansi_mode = False
         if 'rgb_array' not in modes:
             if 'ansi' in modes:
                 self.ansi_mode = True
             else:
                 logger.info('Disabling video recorder because {} neither supports video mode "rgb_array" nor "ansi".'.format(env))
-                enabled = False
+                # Whoops, turns out we shouldn't be enabled after all
+                self.enabled = False
+                return
 
         if path is not None and base_path is not None:
             raise error.Error("You can pass at most one of `path` or `base_path`.")
 
-        self.enabled = enabled
         self.last_frame = None
-        if not self.enabled:
-            return
-
         self.env = env
 
         required_ext = '.json' if self.ansi_mode else '.mp4'
@@ -101,10 +106,13 @@ class VideoRecorder(object):
         frame = self.env.render(mode=render_mode)
 
         if frame is None:
-            # Indicates a bug in the environment: don't want to raise
-            # an error here.
-            logger.warn('Env returned None on render(). Disabling further rendering for video recorder by marking as disabled: path=%s metadata_path=%s', self.path, self.metadata_path)
-            self.broken = True
+            if self._async:
+                return
+            else:
+                # Indicates a bug in the environment: don't want to raise
+                # an error here.
+                logger.warn('Env returned None on render(). Disabling further rendering for video recorder by marking as disabled: path=%s metadata_path=%s', self.path, self.metadata_path)
+                self.broken = True
         else:
             self.last_frame = frame
             if self.ansi_mode:
@@ -243,10 +251,10 @@ class ImageEncoder(object):
         self.frame_shape = frame_shape
         self.frames_per_sec = frames_per_sec
 
-        if distutils.spawn.find_executable('ffmpeg') is not None:
-            self.backend = 'ffmpeg'
-        elif distutils.spawn.find_executable('avconv') is not None:
+        if distutils.spawn.find_executable('avconv') is not None:
             self.backend = 'avconv'
+        elif distutils.spawn.find_executable('ffmpeg') is not None:
+            self.backend = 'ffmpeg'
         else:
             raise error.DependencyNotInstalled("""Found neither the ffmpeg nor avconv executables. On OS X, you can install ffmpeg via `brew install ffmpeg`. On most Ubuntu variants, `sudo apt-get install ffmpeg` should do it. On Ubuntu 14.04, however, you'll need to install avconv with `sudo apt-get install libav-tools`.""")
 
@@ -254,7 +262,12 @@ class ImageEncoder(object):
 
     @property
     def version_info(self):
-        return {'backend':self.backend,'version':str(subprocess.check_output([self.backend, '-version'])),'cmdline':self.cmdline}
+        return {
+            'backend':self.backend,
+            'version':str(subprocess.check_output([self.backend, '-version'],
+                                                  stderr=subprocess.STDOUT)),
+            'cmdline':self.cmdline
+        }
 
     def start(self):
         self.cmdline = (self.backend,
@@ -267,7 +280,7 @@ class ImageEncoder(object):
                      '-f', 'rawvideo',
                      '-s:v', '{}x{}'.format(*self.wh),
                      '-pix_fmt',('rgb32' if self.includes_alpha else 'rgb24'),
-                     '-i', '/dev/stdin',
+                     '-i', '-', # this used to be /dev/stdin, which is not Windows-friendly
 
                      # output
                      '-vcodec', 'libx264',
@@ -276,17 +289,20 @@ class ImageEncoder(object):
                      )
 
         logger.debug('Starting ffmpeg with "%s"', ' '.join(self.cmdline))
-        self.proc = subprocess.Popen(self.cmdline, stdin=subprocess.PIPE)
+        if hasattr(os,'setsid'): #setsid not present on Windows
+            self.proc = subprocess.Popen(self.cmdline, stdin=subprocess.PIPE, preexec_fn=os.setsid)
+        else:
+            self.proc = subprocess.Popen(self.cmdline, stdin=subprocess.PIPE)
 
     def capture_frame(self, frame):
         if not isinstance(frame, (np.ndarray, np.generic)):
             raise error.InvalidFrame('Wrong type {} for {} (must be np.ndarray or np.generic)'.format(type(frame), frame))
         if frame.shape != self.frame_shape:
-            raise error.InvalidFrame("Your frame has shape {}, but the VideoRecorder is configured for shape {}.".format(frame_shape, self.frame_shape))
+            raise error.InvalidFrame("Your frame has shape {}, but the VideoRecorder is configured for shape {}.".format(frame.shape, self.frame_shape))
         if frame.dtype != np.uint8:
             raise error.InvalidFrame("Your frame has data type {}, but we require uint8 (i.e. RGB values from 0-255).".format(frame.dtype))
 
-        if distutils.version.StrictVersion(np.__version__) >= distutils.version.StrictVersion('1.9.0'):
+        if distutils.version.LooseVersion(np.__version__) >= distutils.version.LooseVersion('1.9.0'):
             self.proc.stdin.write(frame.tobytes())
         else:
             self.proc.stdin.write(frame.tostring())
